@@ -147,10 +147,17 @@ int index_write(const Index *index) {
 }
 
 int index_load(Index *index) {
-    // TODO: Implement index loading
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
+    FILE *f = fopen(INDEX_FILE, "rb");
+    if (!f) {
+        index->count = 0;
+        return 0;
+    }
+
+    fread(&index->count, sizeof(int), 1, f);
+    fread(index->entries, sizeof(IndexEntry), index->count, f);
+
+    fclose(f);
+    return 0;
 }
 
 // Save the index to .pes/index atomically.
