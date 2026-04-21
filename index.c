@@ -134,6 +134,18 @@ int index_status(const Index *index) {
 //   - hex_to_hash                      : converting the parsed string to ObjectID
 //
 // Returns 0 on success, -1 on error.
+
+int index_write(const Index *index) {
+    FILE *f = fopen(INDEX_FILE, "wb");
+    if (!f) return -1;
+
+    fwrite(&index->count, sizeof(int), 1, f);
+    fwrite(index->entries, sizeof(IndexEntry), index->count, f);
+
+    fclose(f);
+    return 0;
+}
+
 int index_load(Index *index) {
     // TODO: Implement index loading
     // (See Lab Appendix for logical steps)
