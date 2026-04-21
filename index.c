@@ -190,6 +190,7 @@ int index_add(const char *path) {
     Index index;
     index_load(&index);
 
+    // 1. Read file
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
 
@@ -201,6 +202,7 @@ int index_add(const char *path) {
     fread(data, 1, size, f);
     fclose(f);
 
+    // 2. Create blob
     ObjectID id;
     if (object_write(OBJ_BLOB, data, size, &id) != 0) {
         free(data);
@@ -209,11 +211,20 @@ int index_add(const char *path) {
 
     free(data);
 
-    IndexEntry *e = &index.entries[index.count++];
+    // 3. CHECK IF FILE ALREADY EXISTS (PUT IT HERE)
+    for (int i = 0; i < index.count; i++) {
+        if (strcmp(index.entries[i].path, path) == 0) {
+            index.entries[i].hash = id;
+            return index_write(&index);
+        }
+    }
 
+    // 4. Add new entry
+    IndexEntry *e = &index.entries[index.count++];
     strcpy(e->path, path);
     e->hash = id;
     e->mode = 0100644;
 
+    // 5. Save index
     return index_write(&index);
 }
