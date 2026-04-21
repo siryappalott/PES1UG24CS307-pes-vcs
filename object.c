@@ -117,7 +117,11 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     char hex[65];
     hash_to_hex(id_out, hex);
     printf("DEBUG: hash = %s\n", hex);
-
+    
+    if (object_exists(id_out)) {
+    free(full);
+    return 0;
+    }
 
     printf("DEBUG: full object created\n");
     return -1;
