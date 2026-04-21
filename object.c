@@ -94,8 +94,15 @@ int object_exists(const ObjectID *id) {
 //
 // Returns 0 on success, -1 on error.
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
-    // TODO: Implement
-    (void)type; (void)data; (void)len; (void)id_out;
+    const char *type_str =
+        (type == OBJ_BLOB) ? "blob" :
+        (type == OBJ_TREE) ? "tree" : "commit";
+
+    char header[64];
+    int header_len = sprintf(header, "%s %zu", type_str, len);
+
+    printf("DEBUG: header = %s\n", header); // temporary debug
+
     return -1;
 }
 
