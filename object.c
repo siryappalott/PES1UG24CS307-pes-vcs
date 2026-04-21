@@ -110,8 +110,16 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     full[header_len] = '\0';
     memcpy(full + header_len + 1, data, len);
 
-    printf("DEBUG: full object created\n");
+    
+      
+    compute_hash(full, total_len, id_out);
 
+    char hex[65];
+    hash_to_hex(id_out, hex);
+    printf("DEBUG: hash = %s\n", hex);
+
+
+    printf("DEBUG: full object created\n");
     return -1;
 }
 
