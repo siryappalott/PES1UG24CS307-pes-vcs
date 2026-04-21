@@ -103,6 +103,15 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 
     printf("DEBUG: header = %s\n", header); // temporary debug
 
+    size_t total_len = header_len + 1 + len;
+    char *full = malloc(total_len);
+
+    memcpy(full, header, header_len);
+    full[header_len] = '\0';
+    memcpy(full + header_len + 1, data, len);
+
+    printf("DEBUG: full object created\n");
+
     return -1;
 }
 
