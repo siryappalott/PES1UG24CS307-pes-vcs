@@ -23,6 +23,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <time.h>
+
+// Forward declaration for object_write
+int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
 
 // ─── PROVIDED ────────────────────────────────────────────────────────────────
 
@@ -66,7 +70,7 @@ int index_status(const Index *index) {
         printf("  staged:     %s\n", index->entries[i].path);
         staged_count++;
     }
-    if (staged_count == 0) printf("  (nothing to show)\n");
+    if (staged_count == 0) printf("  (nothing)\n");
     printf("\n");
 
     printf("Unstaged changes:\n");
@@ -84,7 +88,7 @@ int index_status(const Index *index) {
             }
         }
     }
-    if (unstaged_count == 0) printf("  (nothing to show)\n");
+    if (unstaged_count == 0) printf("  (nothing)\n");
     printf("\n");
 
     printf("Untracked files:\n");
@@ -119,7 +123,7 @@ int index_status(const Index *index) {
         }
         closedir(dir);
     }
-    if (untracked_count == 0) printf("  (nothing to show)\n");
+    if (untracked_count == 0) printf("  (nothing)\n");
     printf("\n");
 
     return 0;
@@ -134,27 +138,34 @@ int index_status(const Index *index) {
 //   - hex_to_hash                      : converting the parsed string to ObjectID
 //
 // Returns 0 on success, -1 on error.
+int index_load(Index *idx) {
+    FILE *f = fopen(".pes/index", "r");
 
-int index_write(const Index *index) {
-    FILE *f = fopen(INDEX_FILE, "wb");
-    if (!f) return -1;
-
-    fwrite(&index->count, sizeof(int), 1, f);
-    fwrite(index->entries, sizeof(IndexEntry), index->count, f);
-
-    fclose(f);
-    return 0;
-}
-
-int index_load(Index *index) {
-    FILE *f = fopen(INDEX_FILE, "rb");
     if (!f) {
-        index->count = 0;
-        return 0;
+        idx->count = 0;
+        return 0;  // no index yet
     }
 
-    fread(&index->count, sizeof(int), 1, f);
-    fread(index->entries, sizeof(IndexEntry), index->count, f);
+    idx->count = 0;
+
+    char line[1024];
+
+    while (fgets(line, sizeof(line), f)) {
+        char hash[65], path[512];
+        uint32_t mode, size;
+        uint64_t mtime_sec;
+
+        if (sscanf(line, "%o %64s %lu %u %511s", &mode, hash, &mtime_sec, &size, path) != 5)
+            continue;
+
+        hex_to_hash(hash, &idx->entries[idx->count].hash);
+        strcpy(idx->entries[idx->count].path, path);
+        idx->entries[idx->count].mode = mode;
+        idx->entries[idx->count].mtime_sec = mtime_sec;
+        idx->entries[idx->count].size = size;
+
+        idx->count++;
+    }
 
     fclose(f);
     return 0;
@@ -171,10 +182,23 @@ int index_load(Index *index) {
 //
 // Returns 0 on success, -1 on error.
 int index_save(const Index *index) {
-    // TODO: Implement atomic index saving
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
+    FILE *f = fopen(".pes/index", "w");
+    if (!f) return -1;
+
+    for (int i = 0; i < index->count; i++) {
+        char hash_hex[65];
+        hash_to_hex(&index->entries[i].hash, hash_hex);
+
+        fprintf(f, "%o %s %lu %u %s\n", 
+                index->entries[i].mode,
+                hash_hex,
+                index->entries[i].mtime_sec,
+                index->entries[i].size,
+                index->entries[i].path);
+    }
+
+    fclose(f);
+    return 0;
 }
 
 // Stage a file for the next commit.
@@ -186,23 +210,33 @@ int index_save(const Index *index) {
 //   - index_find                       : checking if the file is already staged
 //
 // Returns 0 on success, -1 on error.
-int index_add(const char *path) {
-    Index index;
-    index_load(&index);
+int index_add(Index *idx, const char *path) {
+    // Ensure .pes directories exist
+    mkdir(".pes", 0755);
+    mkdir(".pes/objects", 0755);
+    mkdir(".pes/refs", 0755);
+    mkdir(".pes/refs/heads", 0755);
 
-    // 1. Read file
+    // Step 1: open file
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
 
+    // Step 2: get size
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     rewind(f);
 
-    void *data = malloc(size);
+    // Step 3: read file
+    void *data = malloc(size);//malloc is used herer
+    if (!data) {
+        fclose(f);
+        return -1;
+    }
+
     fread(data, 1, size, f);
     fclose(f);
 
-    // 2. Create blob
+    // Step 4: store blob (object_write still needed)
     ObjectID id;
     if (object_write(OBJ_BLOB, data, size, &id) != 0) {
         free(data);
@@ -211,20 +245,32 @@ int index_add(const char *path) {
 
     free(data);
 
-    // 3. CHECK IF FILE ALREADY EXISTS (PUT IT HERE)
-    for (int i = 0; i < index.count; i++) {
-        if (strcmp(index.entries[i].path, path) == 0) {
-            index.entries[i].hash = id;
-            return index_write(&index);
+    // Step 5: get file metadata
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        return -1;
+    }
+
+    // Step 6: check if already exists
+    for (int i = 0; i < idx->count; i++) {
+        if (strcmp(idx->entries[i].path, path) == 0) {
+            idx->entries[i].size = size;
+            idx->entries[i].mtime_sec = st.st_mtime;
+            idx->entries[i].mode = st.st_mode;
+
+            // save and return
+            return index_save(idx);
         }
     }
 
-    // 4. Add new entry
-    IndexEntry *e = &index.entries[index.count++];
-    strcpy(e->path, path);
-    e->hash = id;
-    e->mode = 0100644;
+    // Step 7: add new entry
+    strcpy(idx->entries[idx->count].path, path);
+    idx->entries[idx->count].hash = id;
+    idx->entries[idx->count].size = size;
+    idx->entries[idx->count].mtime_sec = st.st_mtime;
+    idx->entries[idx->count].mode = st.st_mode;
+    idx->count++;
 
-    // 5. Save index
-    return index_write(&index);
+    // Step 8: SAVE (CRUCIAL)
+    return index_save(idx);
 }

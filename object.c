@@ -7,8 +7,8 @@
 //
 // PROVIDED functions: compute_hash, object_path, object_exists, hash_to_hex, hex_to_hash
 // TODO functions:     object_write, object_read
-
 #include "pes.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -98,11 +98,13 @@ int object_exists(const ObjectID *id) {
 // Returns 0 on success, -1 on error.
 
 
+
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
     const char *type_str =
         (type == OBJ_BLOB) ? "blob" :
         (type == OBJ_TREE) ? "tree" : "commit";
 
+    // 1. Build header
     char header[64];
     int header_len = sprintf(header, "%s %zu", type_str, len);
 
@@ -114,39 +116,51 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     full[header_len] = '\0';
     memcpy(full + header_len + 1, data, len);
 
+    // 2. Hash
     compute_hash(full, total_len, id_out);
 
+    // 3. Dedup
     if (object_exists(id_out)) {
         free(full);
         return 0;
     }
 
+    // 🔥 ENSURE BASE DIRECTORIES EXIST
+    mkdir(".pes", 0755);
+    mkdir(".pes/objects", 0755);
+
+    // 4. Get path
     char path[512];
     object_path(id_out, path, sizeof(path));
 
+    // 5. Create subdirectory (xx/)
     char dir[512];
     strcpy(dir, path);
     char *slash = strrchr(dir, '/');
     if (slash) {
         *slash = '\0';
         if (mkdir(dir, 0755) != 0 && errno != EEXIST) {
+            perror("mkdir failed");
             free(full);
             return -1;
         }
     }
 
+    // 6. Temp file
     char temp_path[512];
-    
     snprintf(temp_path, sizeof(temp_path), "%s.tmp", path);
 
     int fd = open(temp_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
     if (fd < 0) {
+        perror("open temp failed");
         free(full);
         return -1;
     }
 
+    // 7. Write
     ssize_t written = write(fd, full, total_len);
     if (written != (ssize_t)total_len) {
+        perror("write failed");
         close(fd);
         free(full);
         return -1;
@@ -155,20 +169,25 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
     fsync(fd);
     close(fd);
 
+    // 8. Atomic rename
     if (rename(temp_path, path) != 0) {
+        perror("rename failed");
         free(full);
         return -1;
     }
 
-    int dir_fd = open(dir, O_RDONLY); 
-    if (dir_fd >= 0) {
-    fsync(dir_fd);
-    close(dir_fd);
+    // 9. fsync directory
+    if (slash) {
+        int dir_fd = open(dir, O_RDONLY);
+        if (dir_fd >= 0) {
+            fsync(dir_fd);
+            close(dir_fd);
+        }
     }
+
     free(full);
     return 0;
 }
-
 // Read an object from the store.
 //
 // Steps:
